@@ -2,7 +2,7 @@ import React, { useContext, useEffect, useState } from "react";
 import userIdContext from "./data";
 import './App.css';
 import axios from "axios";
-import url from "./api";
+import url, { api } from "./api";
 import { useLoading } from './loadingContext.jsx';
 
 // Material UI imports
@@ -175,7 +175,7 @@ export default function Profile() {
         }
         
         showLoading();
-        axios.get(`${url}/user/${userId}`)
+        api.get(`/user/${userId}`)
             .then(x => {
                 setProfile(x.data);
                 // Load external wallet settings if they exist
