@@ -71,18 +71,21 @@ export default function MyRouter() {
     
     return (
         <Router>
-            {/* Minimal Header */}
+            {/* Brutalist Header */}
             <header style={{
-                background: 'linear-gradient(135deg, #FF6B35 0%, #ffffff 100%)',
-                padding: '0.5rem 2rem',
-                borderBottom: '2px solid #000000'
+                backgroundColor: '#FF6B35',
+                padding: '0.5rem 1.5rem',
+                borderBottom: '3px solid #000000',
+                boxShadow: '0 3px 0 #000000'
             }}>
                 <div style={{
-                    fontSize: '1.8rem',
+                    fontSize: '1.5rem',
                     fontWeight: '900',
-                    color: '#000000',
+                    color: '#FFFFFF',
                     fontFamily: '"JetBrains Mono", monospace',
-                    letterSpacing: '-0.02em'
+                    letterSpacing: '0.05em',
+                    textTransform: 'uppercase',
+                    textShadow: '2px 2px 0 #000000'
                 }}>
                     DABLU
                 </div>

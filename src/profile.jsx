@@ -4,6 +4,7 @@ import './App.css';
 import axios from "axios";
 import url, { api } from "./api";
 import { useLoading } from './loadingContext.jsx';
+import { useModal } from './ModalContext.jsx';
 
 // Material UI imports
 import {
@@ -23,7 +24,10 @@ import {
   Lock as LockIcon,
   Close as CloseIcon,
   Settings as SettingsIcon,
-  Logout as LogoutIcon
+  Logout as LogoutIcon,
+  Edit as EditIcon,
+  Save as SaveIcon,
+  Cancel as CancelIcon
 } from '@mui/icons-material';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 
@@ -153,6 +157,7 @@ const minimalistTheme = createTheme({
 export default function Profile() {
     const { getUserID, setUserID } = useContext(userIdContext);
     const { showLoading, hideLoading } = useLoading();
+    const { showAlert } = useModal();
     var [profile, setProfile] = useState(null);
     const [showPasswordModal, setShowPasswordModal] = useState(false);
     const [passwordForm, setPasswordForm] = useState({
@@ -166,6 +171,10 @@ export default function Profile() {
     });
     const [externalWalletSaved, setExternalWalletSaved] = useState(false);
     const [isSyncEnabled, setIsSyncEnabled] = useState(true);
+    
+    // Username editing state
+    const [isEditingUsername, setIsEditingUsername] = useState(false);
+    const [newUsername, setNewUsername] = useState('');
     
     useEffect(() => {
         const userId = getUserID();
@@ -190,7 +199,7 @@ export default function Profile() {
             })
             .catch(err => {
                 console.log(err);
-                alert('Failed to load profile data');
+                showAlert('Failed to load profile data', 'error');
             })
             .finally(() => {
                 hideLoading();
@@ -221,17 +230,17 @@ export default function Profile() {
         e.preventDefault();
         
         if (!passwordForm.currentPassword || !passwordForm.newPassword || !passwordForm.confirmPassword) {
-            alert("All fields are required");
+            showAlert("All fields are required", 'warning');
             return;
         }
         
         if (passwordForm.newPassword.length < 6) {
-            alert("New password must be at least 6 characters long");
+            showAlert("New password must be at least 6 characters long", 'warning');
             return;
         }
         
         if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-            alert("New passwords do not match");
+            showAlert("New passwords do not match", 'warning');
             return;
         }
         
@@ -243,11 +252,11 @@ export default function Profile() {
                 newPassword: passwordForm.newPassword
             });
             
-            alert(response.data.message);
+            showAlert(response.data.message, 'success');
             handleClosePasswordModal();
         } catch (error) {
             const errorMessage = error.response?.data?.error || 'Failed to change password';
-            alert('Error: ' + errorMessage);
+            showAlert('Error: ' + errorMessage, 'error');
         } finally {
             hideLoading();
         }
@@ -272,10 +281,10 @@ export default function Profile() {
             
             setExternalWalletSaved(true);
             setIsSyncEnabled(true);
-            alert('External wallet settings saved successfully!');
+            showAlert('External wallet settings saved successfully!', 'success');
         } catch (error) {
             const errorMessage = error.response?.data?.error || 'Failed to save external wallet settings';
-            alert('Error: ' + errorMessage);
+            showAlert('Error: ' + errorMessage, 'error');
         } finally {
             hideLoading();
         }
@@ -291,10 +300,67 @@ export default function Profile() {
             });
             
             setIsSyncEnabled(newSyncStatus);
-            alert(`Auto-sync ${newSyncStatus ? 'resumed' : 'stopped'} successfully!`);
+            showAlert(`Auto-sync ${newSyncStatus ? 'resumed' : 'stopped'} successfully!`, 'success');
         } catch (error) {
             const errorMessage = error.response?.data?.error || 'Failed to toggle sync status';
-            alert('Error: ' + errorMessage);
+            showAlert('Error: ' + errorMessage, 'error');
+        } finally {
+            hideLoading();
+        }
+    };
+
+    // Start editing username
+    const startEditingUsername = () => {
+        setNewUsername(profile?.username || '');
+        setIsEditingUsername(true);
+    };
+
+    // Cancel editing username
+    const cancelEditingUsername = () => {
+        setNewUsername('');
+        setIsEditingUsername(false);
+    };
+
+    // Save username changes
+    const saveUsername = async () => {
+        if (!newUsername.trim()) {
+            showAlert("Username cannot be empty", 'warning');
+            return;
+        }
+
+        if (newUsername.trim().length < 2) {
+            showAlert("Username must be at least 2 characters long", 'warning');
+            return;
+        }
+
+        if (newUsername.trim().length > 50) {
+            showAlert("Username must be less than 50 characters", 'warning');
+            return;
+        }
+
+        if (newUsername.trim() === profile?.username) {
+            cancelEditingUsername();
+            return;
+        }
+
+        try {
+            showLoading();
+            const response = await api.put(`/user/${getUserID()}/profile`, {
+                username: newUsername.trim()
+            });
+
+            // Update the profile state with new username
+            setProfile(prev => ({
+                ...prev,
+                username: response.data.username
+            }));
+
+            showAlert("Username updated successfully!", 'success');
+            setIsEditingUsername(false);
+            setNewUsername('');
+        } catch (error) {
+            const errorMessage = error.response?.data?.error || 'Failed to update username';
+            showAlert('Error: ' + errorMessage, 'error');
         } finally {
             hideLoading();
         }
@@ -493,17 +559,88 @@ export default function Profile() {
                                         }}
                                     />
                                     
-                                    <TextField
-                                        fullWidth
-                                        label="USERNAME"
-                            value={profile.username} 
-                            disabled 
-                                        size="small"
-                                        sx={{ mb: 1 }}
-                                        InputProps={{
-                                            startAdornment: <PersonIcon sx={{ mr: 0.5, color: '#9B59B6', fontSize: '0.9rem' }} />
-                                        }}
-                                    />
+                                    {/* Username field with edit functionality */}
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                                        <TextField
+                                            fullWidth
+                                            label="USERNAME"
+                                            value={isEditingUsername ? newUsername : profile.username} 
+                                            disabled={!isEditingUsername}
+                                            size="small"
+                                            onChange={(e) => setNewUsername(e.target.value)}
+                                            onKeyPress={(e) => {
+                                                if (e.key === 'Enter' && isEditingUsername) {
+                                                    saveUsername();
+                                                }
+                                                if (e.key === 'Escape' && isEditingUsername) {
+                                                    cancelEditingUsername();
+                                                }
+                                            }}
+                                            InputProps={{
+                                                startAdornment: <PersonIcon sx={{ mr: 0.5, color: '#9B59B6', fontSize: '0.9rem' }} />
+                                            }}
+                                            sx={{
+                                                '& .MuiOutlinedInput-root': {
+                                                    backgroundColor: isEditingUsername ? '#fff' : 'transparent'
+                                                }
+                                            }}
+                                        />
+                                        
+                                        {!isEditingUsername ? (
+                                            <Button
+                                                size="small"
+                                                variant="outlined"
+                                                onClick={startEditingUsername}
+                                                sx={{
+                                                    minWidth: 'auto',
+                                                    p: 0.5,
+                                                    border: '1px solid #9B59B6',
+                                                    color: '#9B59B6',
+                                                    '&:hover': {
+                                                        backgroundColor: '#9B59B6',
+                                                        color: 'white'
+                                                    }
+                                                }}
+                                            >
+                                                <EditIcon sx={{ fontSize: '0.9rem' }} />
+                                            </Button>
+                                        ) : (
+                                            <Box sx={{ display: 'flex', gap: 0.5 }}>
+                                                <Button
+                                                    size="small"
+                                                    variant="contained"
+                                                    onClick={saveUsername}
+                                                    sx={{
+                                                        minWidth: 'auto',
+                                                        p: 0.5,
+                                                        backgroundColor: '#2ECC71',
+                                                        '&:hover': {
+                                                            backgroundColor: '#27AE60'
+                                                        }
+                                                    }}
+                                                >
+                                                    <SaveIcon sx={{ fontSize: '0.9rem' }} />
+                                                </Button>
+                                                <Button
+                                                    size="small"
+                                                    variant="outlined"
+                                                    onClick={cancelEditingUsername}
+                                                    sx={{
+                                                        minWidth: 'auto',
+                                                        p: 0.5,
+                                                        border: '1px solid #E74C3C',
+                                                        color: '#E74C3C',
+                                                        '&:hover': {
+                                                            backgroundColor: '#E74C3C',
+                                                            color: 'white'
+                                                        }
+                                                    }}
+                                                >
+                                                    <CancelIcon sx={{ fontSize: '0.9rem' }} />
+                                                </Button>
+                                            </Box>
+                                        )}
+                                    </Box>
                                     
                                     <TextField
                                         fullWidth

@@ -5,6 +5,7 @@ import url from "./api";
 import './room.css';
 import userIdContext from "./data";
 import { useLoading } from './loadingContext.jsx';
+import { useModal } from './ModalContext.jsx';
 
 // Material UI imports
 import {
@@ -28,7 +29,9 @@ import {
   ListItem,
   ListItemText,
   Divider,
-  Alert
+  Alert,
+  Menu,
+  IconButton
 } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
@@ -38,7 +41,10 @@ import {
   People as PeopleIcon,
   Add as AddIcon,
   AttachMoney as MoneyIcon,
-  Person as PersonIcon
+  Person as PersonIcon,
+  MoreVert as MoreVertIcon,
+  Delete as DeleteIcon,
+  Settings as SettingsIcon
 } from '@mui/icons-material';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 
@@ -198,6 +204,26 @@ const brutalistTheme = createTheme({
 export default function Room() {
     const [selectedUsers, setSelectedUsers] = useState([]);
     const roomId = useParams().id;
+    
+    // Format amount - show decimals only when needed
+    const formatAmount = (amount) => {
+        const rounded = parseFloat(amount).toFixed(2);
+        // Remove .00 for whole numbers, keep decimals for others
+        return parseFloat(rounded).toString();
+    };
+
+    // Check if current user is room admin
+    const isRoomAdmin = () => {
+        return room && getUserID() && parseInt(getUserID()) === parseInt(room.adminId);
+    };
+
+    // Check if there are pending settlements
+    const hasPendingSettlements = () => {
+        if (!room || !room.bill) return false;
+        return room.bill.some(row => row.some(amount => amount > 0));
+    };
+
+
     const [spender, setSpender] = useState('select');
     const [amount, setAmount] = useState('');
     const [description, setDescription] = useState('');
@@ -206,6 +232,7 @@ export default function Room() {
     const [payerList, setPayerList] = useState([]);
     const [receivedStatus, setReceivedStatus] = useState({});
     const [isSettling, setIsSettling] = useState(false);
+    const [lastSettlementAttempt, setLastSettlementAttempt] = useState(0);
     const [expandedAccordion, setExpandedAccordion] = useState('expense');
     const [historyLoadCount, setHistoryLoadCount] = useState(0);
     const [expandedHistoryItem, setExpandedHistoryItem] = useState(null);
@@ -213,8 +240,11 @@ export default function Room() {
     const [isPerformingAction, setIsPerformingAction] = useState(false);
     const [lastHistoryLength, setLastHistoryLength] = useState(0);
     const [lastPaymentStatus, setLastPaymentStatus] = useState('');
+    const [roomMenuAnchor, setRoomMenuAnchor] = useState(null);
+    
     var { getUserID, setUserID } = useContext(userIdContext);
     const { showLoading, hideLoading } = useLoading();
+    const { showAlert, showConfirm } = useModal();
 
     const handleAccordionChange = (accordion) => (event, isExpanded) => {
         setExpandedAccordion(isExpanded ? accordion : null);
@@ -304,21 +334,21 @@ export default function Room() {
         if (!room?.roomId) return;
 
         const pollInterval = setInterval(() => {
-            // Only poll if page is visible and user is not performing actions
-            if (!document.hidden && !isPerformingAction) {
+            // Only poll if page is visible and user is not performing actions or settling
+            if (!document.hidden && !isPerformingAction && !isSettling) {
                 fetchRoomDetailsQuietly();
             }
         }, 5000); // Poll every 5 seconds
 
         // Cleanup interval on unmount
         return () => clearInterval(pollInterval);
-    }, [room?.roomId]);
+    }, [room?.roomId, isPerformingAction, isSettling]);
 
     // Listen for page visibility changes
     useEffect(() => {
         const handleVisibilityChange = () => {
-            if (!document.hidden && room?.roomId) {
-                // Page became visible, fetch latest data
+            if (!document.hidden && room?.roomId && !isPerformingAction && !isSettling) {
+                // Page became visible, fetch latest data (only if not performing actions)
                 fetchRoomDetailsQuietly();
             }
         };
@@ -344,14 +374,15 @@ export default function Room() {
             const roomResponse = await axios.get(`${url}/room/${roomId}`);
             const usersResponse = await axios.post(`${url}/users`, { userIds: roomResponse.data.users });
             
+            // Set user names (order doesn't matter for backend calculation)
             setUserNames(usersResponse.data);
             setRoom(roomResponse.data);
             setLastUpdate(Date.now());
         } catch (e) {
-            console.error("Error fetching room data:", e);
-            alert("Failed to load room details");
+                console.error("Error fetching room data:", e);
+                showAlert("Failed to load room details", 'error');
         } finally {
-            hideLoading();
+                hideLoading();
         }
     }
 
@@ -463,22 +494,42 @@ export default function Room() {
         }, 4000);
     }
 
-    useEffect(() => {
-        if (room && userNames.length > 0) {
-            // If room has existing payerList, use it, otherwise calculate new one
-            if (room.payerList && room.payerList.length > 0) {
-                setPayerList(room.payerList);
-                // Initialize received status from existing payerList
-                const initialStatus = {};
-                room.payerList.forEach((payment) => {
-                    initialStatus[`${payment.senderId}-${payment.receiverId}-${payment.amount}`] = payment.isReceived || false;
+    const fetchSettlementFromBackend = async () => {
+        try {
+            console.log("Fetching settlement calculation from backend...");
+            const response = await axios.get(`${url}/room/${room.roomId}/calculate-settlement`);
+            
+            console.log("Backend settlement response:", response.data);
+            
+            if (response.data.success) {
+                setPayerList(response.data.payerList);
+                
+                // Set received status from backend data
+                const backendStatus = {};
+                response.data.payerList.forEach((payment) => {
+                    backendStatus[`${payment.senderId}-${payment.receiverId}-${payment.amount}`] = payment.isReceived;
                 });
-                setReceivedStatus(initialStatus);
-            } else {
-                setSettlement();
+                setReceivedStatus(backendStatus);
+                
+                console.log("Settlement loaded from backend:");
+                response.data.payerList.forEach((p, i) => {
+                    console.log(`  ${i + 1}. ${p.sender} → ₹${formatAmount(p.amount)} → ${p.receiver} (Received: ${p.isReceived})`);
+                });
             }
+        } catch (error) {
+            console.error('Error fetching settlement from backend:', error);
+            // Fallback: set empty list if backend fails
+            setPayerList([]);
+            setReceivedStatus({});
         }
-    }, [room, userNames]);
+    };
+
+    useEffect(() => {
+        if (room?.roomId) {
+            console.log("=== FETCHING SETTLEMENT FROM BACKEND ===");
+            fetchSettlementFromBackend();
+        }
+    }, [room?.roomId]);
 
     const handleCheckboxChange = (userId, isChecked) => {
         setSelectedUsers(prev => {
@@ -497,38 +548,156 @@ export default function Room() {
         );
     };
 
-    const setSettlement = () => {
-        collapseSettlement();
-        let payer = [];
-        for (let i = 0; i < room.bill.length; i++) {
-            let billList = room.bill[i];
-            for (let j = 0; j < billList.length; j++) {
-                if (i == j) continue; // skip self
-                if (billList[j] <= 0) continue; // skip if no debt
-                payer.push({senderId:userNames[i].userId, sender: userNames[i].username, receiverId:userNames[j].userId, receiver: userNames[j].username, amount: billList[j] });
-            }
-        }
-        console.log("payer", payer);
-        setPayerList(payer);
+    // Settlement calculation moved to backend - now using fetchSettlementFromBackend()
+
+    const performSettlement = async () => {
+        const now = Date.now();
+        setLastSettlementAttempt(now);
         
-        // Update payerList in database for received status tracking
-        if (payer.length > 0) {
-            axios.post(`${url}/room/${room.roomId}/update-payerlist`, { payerList: payer })
-                .then(() => {
-                    console.log("PayerList updated in database");
-                })
-                .catch(e => {
-                    console.error("Error updating payerList:", e);
+        console.log("Starting settlement process...");
+        setIsSettling(true);
+        setIsPerformingAction(true);
+        showLoading();
+        
+        try {
+            const settlementData = { 
+                adminId: getUserID(), 
+                payerList: payerList, 
+                settledBy: getUserID(),
+                timestamp: Date.now() // Add timestamp for uniqueness
+            };
+            console.log("Sending settlement request:", settlementData);
+            
+            await axios.post(`${url}/room/settle/${room.roomId}`, settlementData);
+            console.log("Settlement successful!");
+            showAlert("Settlement successful!", 'success');
+            fetchRoomDetails();
+            
+            // Refresh settlement calculation after successful settlement
+            setTimeout(() => {
+                fetchSettlementFromBackend();
+            }, 500); // Small delay to ensure room data is updated
+            
+            // Let polling handle updates naturally
+        } catch (e) {
+            console.error("Error settling debts:", e);
+            console.error("Settlement error details:", {
+                status: e.response?.status,
+                statusText: e.response?.statusText,
+                data: e.response?.data,
+                url: e.config?.url,
+                method: e.config?.method,
+                timestamp: new Date().toISOString()
+            });
+            
+            if (e.response?.status === 409) {
+                console.log("409 Conflict - Settlement conflict detected");
+                
+                const errorData = e.response?.data || {};
+                const errorType = errorData.type;
+                const errorMessage = errorData.error || "";
+                const suggestion = errorData.suggestion || "";
+                const lastSettlement = errorData.lastSettlement;
+                const timeSince = errorData.timeSinceLastSettlement;
+                
+                console.log("409 Error details:", {
+                    type: errorType,
+                    message: errorMessage,
+                    suggestion: suggestion,
+                    lastSettlement: lastSettlement,
+                    timeSinceLastSettlement: timeSince,
+                    serverTime: errorData.serverTime,
+                    lastSettlementTime: errorData.lastSettlementTime,
+                    clientTime: Date.now()
                 });
+                
+                // Handle specific error types from backend
+                if (errorType === 'RECENT_SETTLEMENT') {
+                    const timeAgo = timeSince ? Math.round(Math.abs(timeSince) / 1000) : 'a few';
+                    const settlerName = lastSettlement?.settledByName || 'another user';
+                    
+                    // Check for time sync issues
+                    if (timeSince < 0) {
+                        console.warn("⚠️ Negative time difference detected - possible clock sync issue");
+                        console.warn(`Server time: ${errorData.serverTime}, Settlement time: ${errorData.lastSettlementTime}, Client time: ${Date.now()}`);
+                        showAlert(`⚠️ Settlement Timing Issue\n\nA settlement by ${settlerName} was detected, but there may be a clock synchronization issue between your device and the server.\n\nThe room data will be refreshed automatically.`, 'warning');
+                    } else {
+                        showAlert(`✅ Settlement Already Completed!\n\nThe settlement was completed by ${settlerName} ${timeAgo} seconds ago.\n\nThe room data has been updated automatically. No further action is needed.`, 'info');
+                    }
+                } else if (errorType === 'SETTLEMENT_IN_PROGRESS') {
+                    showAlert(`⏳ Settlement In Progress\n\nAnother user is currently processing the settlement.\n\n${suggestion || 'Please wait 10-15 seconds and try again if needed.'}`, 'warning');
+                } else {
+                    // Fallback for any other 409 scenarios
+                    if (errorMessage.includes("recently completed") || lastSettlement) {
+                        showAlert("✅ Settlement was just completed by another user!\n\nThe room has been automatically updated. No further action needed.", 'info');
+                    } else if (errorMessage.includes("already in progress")) {
+                        showAlert("⏳ Another settlement is currently being processed.\n\nPlease wait 10-15 seconds and try again if needed.", 'warning');
+                    } else {
+                        showAlert("⚠️ Settlement conflict detected!\n\nAnother user may have just completed the settlement or one is in progress.\n\nRefreshing room data...", 'warning');
+                    }
+                }
+                
+                // Always refresh to get latest state after a short delay
+                setTimeout(() => {
+                    fetchRoomDetails();
+                }, 1500);
+            } else if (e.response?.status === 400) {
+                console.error("400 Bad Request:", e.response?.data);
+                showAlert("Invalid settlement request. Please check if all payments are confirmed and try again.", 'error');
+                fetchRoomDetails();
+            } else if (e.response?.status >= 500) {
+                console.error("Server error:", e.response?.status, e.response?.data);
+                showAlert("Server error occurred. Please try again in a moment.", 'error');
+            } else if (e.code === 'ECONNABORTED' || e.message.includes('timeout')) {
+                console.error("Request timeout:", e.message);
+                showAlert("Request timed out. Please check your connection and try again.", 'error');
+            } else {
+                console.error("Unknown settlement error:", e.message, e.code);
+                showAlert("Failed to settle debts. Please try again.", 'error');
+            }
+        } finally {
+            console.log("Settlement process completed, resetting states");
+            setIsSettling(false);
+            setIsPerformingAction(false);
+            hideLoading();
         }
-        
-        // Initialize received status for all transactions
-        const initialStatus = {};
-        payer.forEach((payment, index) => {
-            initialStatus[`${payment.senderId}-${payment.receiverId}-${payment.amount}`] = payment.isReceived || false;
-        });
-        setReceivedStatus(initialStatus);
-    }
+    };
+
+    const deleteRoom = async () => {
+        if (!isRoomAdmin()) {
+            showAlert("Only room admin can delete the room", 'error');
+            return;
+        }
+
+        if (hasPendingSettlements()) {
+            showAlert("Cannot delete room while settlements are pending. Please settle all debts first.", 'warning');
+            return;
+        }
+
+                 showConfirm(
+             `Are you sure you want to delete the room "${room.roomName}"?\n\nThis action cannot be undone. All room data including history will be permanently deleted.`,
+             async () => {
+                 try {
+                     showLoading();
+                     await axios.delete(`${url}/room/${room.roomId}`, {
+                         data: { adminId: getUserID() }
+                     });
+                     
+                     showAlert("Room deleted successfully!", 'success');
+                     // Redirect to rooms list or home page
+                     setTimeout(() => {
+                         window.location.href = '/'; // or use your routing method
+                     }, 2000);
+                     
+                 } catch (error) {
+                     console.error('Error deleting room:', error);
+                     showAlert('Failed to delete room: ' + (error.response?.data?.error || error.message), 'error');
+                 } finally {
+                     hideLoading();
+                 }
+             }
+         );
+    };
 
     const markAsReceived = async (senderId, receiverId, amount) => {
         const key = `${senderId}-${receiverId}-${amount}`;
@@ -536,20 +705,15 @@ export default function Room() {
         try {
             setIsPerformingAction(true);
             showLoading();
-            await axios.post(`${url}/room/${room.roomId}/mark-received`, {
-                senderId,
-                receiverId, 
-                amount,
-                userId: getUserID()
-            });
             
-            // Update local state
+            console.log(`Marking as received: ${senderId} → ${receiverId} ₹${amount}`);
+            
+            // Optimistic update - show immediately for better UX
             setReceivedStatus(prev => ({
                 ...prev,
                 [key]: true
             }));
             
-            // Update payerList state 
             setPayerList(prev => 
                 prev.map(payer => 
                     payer.senderId === senderId && 
@@ -560,32 +724,47 @@ export default function Room() {
                 )
             );
 
-            // Let polling handle updates naturally
+            // Save to backend
+            const response = await axios.post(`${url}/room/${room.roomId}/mark-received`, {
+                senderId,
+                receiverId, 
+                amount,
+                userId: getUserID()
+            });
+            
+            if (response.data.success) {
+                console.log("✅ Payment marked as received and saved to backend");
+                
+                // Refresh from backend to ensure consistency
+                fetchSettlementFromBackend();
+            }
             
         } catch (error) {
             console.error('Error marking payment as received:', error);
-            alert('Failed to mark payment as received');
+            
+            // Revert optimistic update on error
+            setReceivedStatus(prev => ({
+                ...prev,
+                [key]: false
+            }));
+            setPayerList(prev => 
+                prev.map(payer => 
+                    payer.senderId === senderId && 
+                    payer.receiverId === receiverId && 
+                    payer.amount === amount
+                        ? { ...payer, isReceived: false }
+                        : payer
+                )
+            );
+            
+            showAlert('Failed to mark payment as received: ' + (error.response?.data?.error || error.message), 'error');
         } finally {
             setIsPerformingAction(false);
             hideLoading();
         }
     }
 
-    const collapseSettlement = () => {
-        for (let i = 0; i < room.bill.length; i++) {
-            for (let j = 0; j <= i; j++) {
-                if (i === j) continue; // skip self
-                if (room.bill[i][j] <= 0) continue; // skip if no debt
-                if (room.bill[i][j] > room.bill[j][i]) {
-                    room.bill[i][j] -= room.bill[j][i];
-                    room.bill[j][i] = 0; // reset the reverse debt to 0
-                } else {
-                    room.bill[j][i] -= room.bill[i][j];
-                    room.bill[i][j] = 0; // reset the reverse debt to 0
-                }
-            }
-        }
-    }
+
 
     const isExpenseFormValid = () => {
         // Check if all required fields are filled
@@ -604,7 +783,7 @@ export default function Room() {
 
     const submitExpense = () => {
         if(spender==="select"||amount==0|| selectedUsers.length === 0 || !description.trim()) {
-            alert("Please check the inputs - all fields including description are required");
+            showAlert("Please check the inputs - all fields including description are required", 'warning');
             return;
         }
         var is0= false;
@@ -615,7 +794,7 @@ export default function Room() {
             }
         }
         if(is0===false) {
-            alert("Atleast one user should have 0 share");
+            showAlert("At least one user should have 0 share", 'warning');
             return;
         }
         
@@ -628,9 +807,7 @@ export default function Room() {
             hour12: true 
         }); // Format: HH:MM AM/PM
         
-        setIsPerformingAction(true);
-        showLoading();
-        axios.post(`${url}/rooms/${room.roomId}/expense`, {
+        const expenseData = {
             userId: spender,
             amount: amount,
             description: description,
@@ -638,20 +815,29 @@ export default function Room() {
             time: currentTime,
             users: selectedUsers,
             createdBy: getUserID()
-        })
+        };
+        
+        console.log("Submitting expense:", expenseData);
+        
+        setIsPerformingAction(true);
+        showLoading();
+        axios.post(`${url}/rooms/${room.roomId}/expense`, expenseData)
         .then(() => {
-            alert("Expense submitted successfully!");
+            showAlert("Expense submitted successfully!", 'success');
             setAmount("");
             setDescription("");
             setSpender("select");
             setSelectedUsers([]);
             fetchRoomDetails();
             
-            // Let polling handle updates naturally
+            // Refresh settlement calculation after adding expense
+            setTimeout(() => {
+                fetchSettlementFromBackend();
+            }, 500); // Small delay to ensure room data is updated
         })
         .catch(e => {
             console.log(e);
-            alert("Failed to submit expense");
+            showAlert("Failed to submit expense", 'error');
         })
         .finally(() => {
             setIsPerformingAction(false);
@@ -731,6 +917,54 @@ export default function Room() {
                 }}>
                     {/* Room Header */}
                     <Paper sx={{ p: 1, mb: 1.5, textAlign: 'center', position: 'relative' }}>
+                        {/* Room Management Menu (Admin Only) */}
+                        {isRoomAdmin() && (
+                            <Box sx={{ position: 'absolute', top: 8, right: 8 }}>
+                                <IconButton
+                                    onClick={(e) => setRoomMenuAnchor(e.currentTarget)}
+                                    size="small"
+                                    sx={{
+                                        color: '#666666',
+                                        '&:hover': {
+                                            backgroundColor: '#f5f5f5'
+                                        }
+                                    }}
+                                >
+                                    <MoreVertIcon />
+                                </IconButton>
+                                <Menu
+                                    anchorEl={roomMenuAnchor}
+                                    open={Boolean(roomMenuAnchor)}
+                                    onClose={() => setRoomMenuAnchor(null)}
+                                    PaperProps={{
+                                        sx: {
+                                            border: '1px solid #000000',
+                                            borderRadius: 4
+                                        }
+                                    }}
+                                >
+                                    <MenuItem
+                                        onClick={() => {
+                                            setRoomMenuAnchor(null);
+                                            deleteRoom();
+                                        }}
+                                        disabled={hasPendingSettlements()}
+                                        sx={{
+                                            color: hasPendingSettlements() ? '#CCCCCC' : '#E74C3C',
+                                            fontSize: '0.8rem',
+                                            fontWeight: 600,
+                                            '&:hover': {
+                                                backgroundColor: hasPendingSettlements() ? 'transparent' : '#fff5f5'
+                                            }
+                                        }}
+                                    >
+                                        <DeleteIcon sx={{ mr: 1, fontSize: '1rem' }} />
+                                        {hasPendingSettlements() ? 'DELETE (Settlements Pending)' : 'DELETE ROOM'}
+                                    </MenuItem>
+                                </Menu>
+                            </Box>
+                        )}
+
                         <Typography variant="h1" sx={{ 
                             fontSize: { xs: '1.2rem', sm: '1.5rem' },
                             mb: 0.25
@@ -748,6 +982,20 @@ export default function Room() {
                                 borderRadius: 3
                             }}
                         />
+                        {isRoomAdmin() && (
+                            <Chip 
+                                label="ADMIN"
+                                size="small"
+                                sx={{
+                                    backgroundColor: '#9B59B6',
+                                    color: '#ffffff',
+                                    fontWeight: 600,
+                                    border: '1px solid #000000',
+                                    borderRadius: 3,
+                                    ml: 1
+                                }}
+                            />
+                        )}
                     </Paper>
 
                 {/* Expense Section */}
@@ -766,11 +1014,11 @@ export default function Room() {
                                                 <AccordionDetails sx={{ p: 0.75 }}>
 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
                                 <Box sx={{ display: 'flex', gap: 0.75 }}>
-                                    <TextField
+                                <TextField
                                         type="number"
-                                        label="AMOUNT"
-                                        value={amount}
-                                        onChange={(e) => setAmount(e.target.value)}
+                                    label="AMOUNT"
+                                    value={amount}
+                                    onChange={(e) => setAmount(e.target.value)}
                                         placeholder="Enter amount"
                                         size="small"
                                         sx={{ 
@@ -783,54 +1031,54 @@ export default function Room() {
                                                 }
                                             }
                                         }}
-                                        InputProps={{
+                                    InputProps={{
                                             startAdornment: <Typography sx={{ mr: 0.25, color: '#2ECC71', fontSize: '0.8rem', fontWeight: 600 }}>₹</Typography>
-                                        }}
-                                    />
+                                    }}
+                                />
 
                                     <FormControl size="small" sx={{ flex: 1 }}>
-                                        <InputLabel 
-                                            sx={{
+                                    <InputLabel 
+                                        sx={{
                                                 fontSize: '0.65rem',
                                                 fontWeight: 600,
-                                                color: '#3498DB',
-                                                backgroundColor: '#ffffff',
+                                            color: '#3498DB',
+                                            backgroundColor: '#ffffff',
                                                 padding: '0 3px',
                                                 transform: 'translate(12px, -8px) scale(1)',
-                                                '&.MuiInputLabel-shrink': {
+                                            '&.MuiInputLabel-shrink': {
                                                     transform: 'translate(12px, -8px) scale(1)',
-                                                },
-                                                '&.Mui-focused': {
-                                                    color: '#E74C3C',
-                                                },
-                                            }}
-                                        >
-                                            SPENT BY
-                                        </InputLabel>
-                                        <Select
-                                            value={spender}
-                                            label="SPENT BY"
-                                            onChange={(e) => setSpender(e.target.value)}
-                                            sx={{
+                                            },
+                                            '&.Mui-focused': {
+                                                color: '#E74C3C',
+                                            },
+                                        }}
+                                    >
+                                        SPENT BY
+                                    </InputLabel>
+                                    <Select
+                                        value={spender}
+                                        label="SPENT BY"
+                                        onChange={(e) => setSpender(e.target.value)}
+                                        sx={{
                                                 borderRadius: 4,
-                                                backgroundColor: '#ffffff',
+                                            backgroundColor: '#ffffff',
                                                 border: '1px solid #000000',
-                                                '& fieldset': { border: 'none' },
-                                                '& .MuiOutlinedInput-input': {
+                                            '& fieldset': { border: 'none' },
+                                            '& .MuiOutlinedInput-input': {
                                                     padding: '8px 10px',
                                                     fontSize: '0.8rem',
                                                     fontWeight: 500,
-                                                },
-                                            }}
-                                        >
-                                            <MenuItem value="select">Select</MenuItem>
-                                            {userNames.map((member) => (
-                                                <MenuItem key={member.userId} value={member.userId}>
-                                                    {member.username}
-                                                </MenuItem>
-                                            ))}
-                                        </Select>
-                                    </FormControl>
+                                            },
+                                        }}
+                                    >
+                                        <MenuItem value="select">Select</MenuItem>
+                                        {userNames.map((member) => (
+                                            <MenuItem key={member.userId} value={member.userId}>
+                                                {member.username}
+                                            </MenuItem>
+                                        ))}
+                                    </Select>
+                                </FormControl>
                                 </Box>
 
                                 <TextField
@@ -863,16 +1111,16 @@ export default function Room() {
                                         SHARE DISTRIBUTION
                                     </Typography>
                                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.125 }}>
-                                        {userNames.map((member) => {
-                                            const isSelected = selectedUsers.some(u => u.userId === member.userId);
-                                            const userShare = selectedUsers.find(u => u.userId === member.userId)?.share || 0;
+                                    {userNames.map((member) => {
+                                        const isSelected = selectedUsers.some(u => u.userId === member.userId);
+                                        const userShare = selectedUsers.find(u => u.userId === member.userId)?.share || 0;
 
-                                            return (
-                                                <Box
-                                                    key={member.userId}
-                                                    sx={{
-                                                        display: 'flex',
-                                                        alignItems: 'center',
+                                        return (
+                                            <Box
+                                                key={member.userId}
+                                                sx={{
+                                                    display: 'flex',
+                                                    alignItems: 'center',
                                                         justifyContent: 'space-between',
                                                         py: 0.25,
                                                         px: 0.5,
@@ -880,24 +1128,24 @@ export default function Room() {
                                                         '&:last-child': {
                                                             borderBottom: 'none'
                                                         }
-                                                    }}
-                                                >
-                                                    <FormControlLabel
-                                                        control={
-                                                            <Checkbox
-                                                        checked={isSelected}
-                                                        onChange={(e) => handleCheckboxChange(member.userId, e.target.checked)}
+                                                }}
+                                            >
+                                                <FormControlLabel
+                                                    control={
+                                                        <Checkbox
+                                                    checked={isSelected}
+                                                    onChange={(e) => handleCheckboxChange(member.userId, e.target.checked)}
                                                                 size="small"
-                                                                sx={{
+                                                            sx={{
+                                                                color: '#FF6B35',
+                                                                '&.Mui-checked': {
                                                                     color: '#FF6B35',
-                                                                    '&.Mui-checked': {
-                                                                        color: '#FF6B35',
-                                                                    },
+                                                                },
                                                                     p: 0.25
-                                                                }}
-                                                            />
-                                                        }
-                                                        label={member.username}
+                                                            }}
+                                                        />
+                                                    }
+                                                    label={member.username}
                                                         sx={{ 
                                                             flex: 1,
                                                             '& .MuiFormControlLabel-label': {
@@ -905,13 +1153,13 @@ export default function Room() {
                                                                 fontWeight: 500
                                                             }
                                                         }}
-                                                    />
-                                                    <TextField
-                                                        type="number"
-                                                        size="small"
-                                                        disabled={!isSelected}
-                                                        value={userShare}
-                                                        onChange={(e) => handleShareChange(member.userId, e.target.value)}
+                                                />
+                                                <TextField
+                                                    type="number"
+                                                    size="small"
+                                                    disabled={!isSelected}
+                                                    value={userShare}
+                                                    onChange={(e) => handleShareChange(member.userId, e.target.value)}
                                                         placeholder="₹"
                                                         sx={{ 
                                                             width: 45,
@@ -926,10 +1174,10 @@ export default function Room() {
                                                                 }
                                                             }
                                                         }}
-                                                    />
-                                                </Box>
-                                            );
-                                        })}
+                                                />
+                                            </Box>
+                                        );
+                                    })}
                                     </Box>
                                 </Box>
 
@@ -1029,8 +1277,8 @@ export default function Room() {
                                                         color: '#FF9800',
                                                         fontFamily: 'monospace'
                                                     }}>
-                                                        ₹{payer.amount}
-                                                    </Typography>
+                                                        ₹{formatAmount(payer.amount)}
+                                                </Typography>
                                                     
                                                     {/* Received Button - Immediate Right */}
                                                     {isCurrentUserReceiver && !isReceived && (
@@ -1038,7 +1286,7 @@ export default function Room() {
                                                             variant="contained"
                                                             size="small"
                                                             onClick={() => markAsReceived(payer.senderId, payer.receiverId, payer.amount)}
-                                                            sx={{
+                                                    sx={{
                                                                 backgroundColor: '#00BCD4',
                                                                 color: '#FFFFFF',
                                                                 fontWeight: 600,
@@ -1062,7 +1310,7 @@ export default function Room() {
                                                                 }}
                                                             >
                                                                 ✓
-                                                            </Box>
+                                            </Box>
                                                             <Box
                                                                 component="span"
                                                                 sx={{
@@ -1106,49 +1354,28 @@ export default function Room() {
                                             </Box>
                                                 );
                                             })}
-                                                                                <Button 
+                                        <Button 
                                             variant="contained"
                                             color="error"
                                             size="small"
                                             fullWidth
                                             disabled={!payerList.every(payer => payer.isReceived === true) || payerList.length === 0 || isSettling}
-                                            onClick={async () => {
+                                            onClick={() => {
                                 if (isSettling) {
+                                    console.log("Settlement already in progress, ignoring click");
                                     return; // Prevent multiple clicks
                                 }
                                 
-                                if(!confirm("Are you sure you want to settle the debts?")) {
-                                    return
+                                // Add cooldown period to prevent rapid attempts
+                                const now = Date.now();
+                                const timeSinceLastAttempt = now - lastSettlementAttempt;
+                                if (timeSinceLastAttempt < 7000) { // 7 second cooldown (reduced from 10)
+                                    const remainingTime = Math.ceil((7000 - timeSinceLastAttempt) / 1000);
+                                    showAlert(`⏳ Cooldown Active\n\nPlease wait ${remainingTime} more seconds before attempting settlement again.\n\nThis prevents conflicts with other users.`, 'warning');
+                                    return;
                                 }
                                 
-                                setIsSettling(true);
-                                setIsPerformingAction(true);
-                                showLoading();
-                                
-                                try {
-                                    await axios.post(`${url}/room/settle/${room.roomId}`, { 
-                                        adminId: getUserID(), 
-                                        payerList: payerList, 
-                                        settledBy: getUserID(),
-                                        timestamp: Date.now() // Add timestamp for uniqueness
-                                    });
-                                        alert("Settlement successful!");
-                                        fetchRoomDetails();
-                                        
-                                        // Let polling handle updates naturally
-                                } catch (e) {
-                                        console.error("Error settling debts:", e);
-                                    if (e.response?.status === 409) {
-                                        alert("Settlement already in progress or completed by another user");
-                                        fetchRoomDetails(); // Refresh to get latest state
-                                    } else {
-                                        alert("Failed to settle debts");
-                                    }
-                                } finally {
-                                    setIsSettling(false);
-                                    setIsPerformingAction(false);
-                                        hideLoading();
-                                }
+                                showConfirm("Are you sure you want to settle the debts?", performSettlement);
                                             }}
                                             sx={{
                                                 backgroundColor: '#E74C3C',
@@ -1169,7 +1396,7 @@ export default function Room() {
                                             ) : payerList.every(payer => payer.isReceived === true) && payerList.length > 0 ? (
                                                 <>
                                                     <Box component="span" sx={{ display: { xs: 'none', sm: 'inline' } }}>
-                                                        SETTLE ALL DEBTS
+                                            SETTLE ALL DEBTS
                                                     </Box>
                                                     <Box component="span" sx={{ display: { xs: 'inline', sm: 'none' } }}>
                                                         SETTLE ALL
@@ -1202,7 +1429,7 @@ export default function Room() {
                                     >
                                         <>
                                             <Box component="span" sx={{ display: { xs: 'none', sm: 'inline' } }}>
-                                                No settlements required at the moment.
+                                        No settlements required at the moment.
                                             </Box>
                                             <Box component="span" sx={{ display: { xs: 'inline', sm: 'none' } }}>
                                                 No settlements needed
@@ -1266,7 +1493,7 @@ export default function Room() {
                                                      </Typography>
                                                      {historyItem.isExpense && (
                                                          <Typography sx={{
-                                                             fontWeight: 700,
+                                                                 fontWeight: 700,
                                                              fontSize: '0.7rem',
                                                              color: '#2ECC71',
                                                              backgroundColor: 'rgba(46, 204, 113, 0.1)',
@@ -1276,7 +1503,7 @@ export default function Room() {
                                                              border: '1px solid rgba(46, 204, 113, 0.3)',
                                                              fontFamily: 'monospace'
                                                          }}>
-                                                             ₹{historyItem.amount}
+                                                             ₹{formatAmount(historyItem.amount)}
                                                          </Typography>
                                                      )}
                                                      <Typography sx={{
@@ -1291,26 +1518,26 @@ export default function Room() {
                                                              <Typography component="span" sx={{
                                                                  fontSize: '0.6rem',
                                                                  color: '#F39C12',
-                                                                 fontWeight: 600,
+                                                                     fontWeight: 600,
                                                                  ml: 0.5
                                                              }}>
                                                                  +{historyItem.users.length - 3} more
                                                              </Typography>
                                                          )}
                                                      </Typography>
-                                                 </Box>
+                                                     </Box>
                                                  
                                                                                                   {/* Date on the right */}
-                                                 <Typography 
-                                                     sx={{
+                                                         <Typography 
+                                                             sx={{ 
                                                          fontSize: '0.65rem',
                                                          color: '#666666',
                                                          fontWeight: 500
                                                      }}
                                                  >
                                                      {historyItem.date ? new Date(historyItem.date).toLocaleDateString() : 'No date'}
-                                                 </Typography>
-                                              </Box>
+                                                         </Typography>
+                                             </Box>
                                         </AccordionSummary>
                                                                                  <AccordionDetails sx={{ p: 0.5 }}>
                                              {historyItem.isExpense ? (
@@ -1325,7 +1552,7 @@ export default function Room() {
                                                              }) : 'No date available'} | <strong>Time:</strong> {historyItem.time || 'No time available'}
                                                          </Typography>
                                                          <Typography variant="body2" sx={{ mb: 0.5, fontSize: '0.75rem' }}>
-                                                             <strong>Amount:</strong> ₹{historyItem.amount}
+                                                             <strong>Amount:</strong> ₹{formatAmount(historyItem.amount)}
                                                          </Typography>
                                                          <Typography variant="body2" sx={{ mb: 0.5, fontSize: '0.75rem' }}>
                                                             <strong>Description:</strong> {historyItem.description}
@@ -1333,7 +1560,7 @@ export default function Room() {
                                                         <Typography variant="body2" sx={{ mb: 0.5, fontSize: '0.75rem' }}>
                                                             <strong>Spent by:</strong> {userNames.find(user => user.userId === historyItem.paidUserId)?.username || 'Unknown'} | <strong>Added by:</strong> {historyItem.createdByName || userNames.find(user => user.userId === historyItem.createdByUserId)?.username || 'Unknown'}
                                                          </Typography>
-                                                    </Box>
+                                                     </Box>
                                                      
                                                      {/* User Shares */}
                                                      <Typography variant="h6" sx={{ fontWeight: 600, mb: 0.5, fontSize: '0.7rem', color: '#666666' }}>
@@ -1359,7 +1586,7 @@ export default function Room() {
                                                                      {userNames.find(User => User.userId === user.userId)?.username}
                                                                  </Typography>
                                                                  <Typography sx={{ fontSize: '0.7rem', color: '#2ECC71', fontWeight: 600 }}>
-                                                                     ₹{user.share}
+                                                                     ₹{formatAmount(user.share)}
                                                                  </Typography>
                                                              </Box>
                                                          ))}
@@ -1407,7 +1634,7 @@ export default function Room() {
                                                                 {payer.receiver}
                                                             </Typography>
                                                             <Typography sx={{ fontWeight: 500, fontSize: '0.7rem', fontFamily: 'monospace' }}>
-                                        ₹{payer.amount}
+                                        ₹{formatAmount(payer.amount)}
                                                             </Typography>
                                                         </Box>
                                                     ))}

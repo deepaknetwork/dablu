@@ -6,6 +6,7 @@ import { useNavigate } from "react-router-dom";
 import './App.css';
 import RoomCard from "./roomCard";
 import { useLoading } from './loadingContext.jsx';
+import { useModal } from './ModalContext.jsx';
 
 // Material UI imports
 import {
@@ -174,6 +175,7 @@ const brutalistTheme = createTheme({
 export default function Rooms() {
     const { getUserID, setUserID } = useContext(userIdContext);
     const { showLoading, hideLoading } = useLoading();
+    const { showAlert } = useModal();
     var [rooms, setRooms] = useState([]);
     var [roomIdInput, setRoomIdInput] = useState('');
     var [roomNameInput, setRoomNameInput] = useState('');
@@ -196,7 +198,7 @@ export default function Rooms() {
             })
             .catch(err => {
                 console.log(err);
-                alert('Failed to load rooms');
+                showAlert('Failed to load rooms', 'error');
             })
             .finally(() => {
                 hideLoading();
@@ -205,20 +207,20 @@ export default function Rooms() {
 
     const handleJoinRoom = () => {
         if (!roomIdInput) {
-                                            alert("Please enter a room ID");
+                                            showAlert("Please enter a room ID", 'warning');
                                             return;
                                         }
                                         
                                         showLoading();
         axios.post(`${url}/rooms/${roomIdInput}/join`, { userId: getUserID() })
                                             .then(x => {
-                                                alert("Successfully joined room!")
+                                                showAlert("Successfully joined room!", 'success')
                 setShowJoinModal(false);
                 setRoomIdInput('');
                                                 window.location.reload();
                                             })
                                             .catch(x => {
-                                                alert("Error joining room")
+                                                showAlert("Error joining room", 'error')
                                                 console.log(x);
                                             })
                                             .finally(() => {
@@ -228,20 +230,20 @@ export default function Rooms() {
 
     const handleCreateRoom = () => {
         if (!roomNameInput.trim()) {
-                                                alert("Please enter a room name");
+                                                showAlert("Please enter a room name", 'warning');
                                                 return;
                                             }
                                             
                                             showLoading();
         axios.post(`${url}/rooms`, { adminId: getUserID(), roomName: roomNameInput })
                                                 .then(x => {
-                                                    alert("Room created successfully!")
+                                                    showAlert("Room created successfully!", 'success')
                 setShowCreateModal(false);
                 setRoomNameInput('');
                                                     window.location.reload();
                                                 })
                                                 .catch(x => {
-                                                    alert("Error creating room")
+                                                    showAlert("Error creating room", 'error')
                                                     console.log(x);
                                                 })
                                                 .finally(() => {

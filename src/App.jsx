@@ -13,6 +13,7 @@ import MyRouter from './router'
 import userIdContext from './data'
 import { LoadingProvider } from './loadingContext.jsx'
 import LoadingSpinner from './LoadingSpinner'
+import { ModalProvider } from './ModalContext.jsx'
 
 function App() {
   
@@ -36,12 +37,14 @@ function setUserID(id){
 
 
   return (
-    <LoadingProvider>
-      <userIdContext.Provider value={{ getUserID, setUserID }}>
-        <MyRouter />
-        <LoadingSpinner />
-      </userIdContext.Provider>
-    </LoadingProvider>
+    <ModalProvider>
+      <LoadingProvider>
+        <userIdContext.Provider value={{ getUserID, setUserID }}>
+          <MyRouter />
+          <LoadingSpinner />
+        </userIdContext.Provider>
+      </LoadingProvider>
+    </ModalProvider>
   )
 }
 

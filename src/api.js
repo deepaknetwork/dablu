@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { showGlobalAlert } from './ModalContext.jsx';
 
 const url = "https://dablu-rest-api.onrender.com";
 // const url = "http://localhost:5000";
@@ -25,7 +26,7 @@ api.interceptors.response.use(
       localStorage.removeItem("Dablu.userID");
       
       // Show user a message
-      alert("Your session has expired. Please login again.");
+      showGlobalAlert("Your session has expired. Please login again.", 'error');
       
       // Redirect to login page
       window.location.href = '/';
