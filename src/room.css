@@ -1,0 +1,95 @@
+/* Professional Room Styles - Override for specific components */
+.roomsecdiv {
+    width: 100%;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: 0 !important;
+}
+
+/* History Accordion Specific Styles */
+.historysec {
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: 0 !important;
+}
+
+.historysec1 {
+    width: 100%;
+    margin-bottom: 0.75rem !important;
+    border: 1px solid #e9ecef !important;
+    border-radius: 8px !important;
+    overflow: hidden;
+}
+
+.historysec .accordion-button {
+    background: #ffffff !important;
+    border: none !important;
+    padding: 1rem !important;
+    font-size: 0.95rem !important;
+    color: #495057 !important;
+    border-radius: 8px 8px 0 0 !important;
+    transition: all 0.3s ease !important;
+}
+
+.historysec .accordion-button:not(.collapsed) {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%) !important;
+    color: #2c3e50 !important;
+    box-shadow: none !important;
+}
+
+.historysec .accordion-button:focus {
+    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25) !important;
+    border-color: #007bff !important;
+}
+
+.roomHistoryset {
+    background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%) !important;
+    color: #856404 !important;
+    border-color: #f0c674 !important;
+}
+
+.roomHistoryset:not(.collapsed) {
+    background: linear-gradient(135deg, #ffeaa7 0%, #fdcb6e 100%) !important;
+    color: #6c5019 !important;
+}
+
+.dropdown-his {
+    width: 100%;
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    flex-wrap: wrap !important;
+    gap: 0.5rem !important;
+}
+
+.historysec .accordion-body {
+    background: #ffffff !important;
+    padding: 1.25rem !important;
+    border-top: 1px solid #e9ecef !important;
+}
+
+/* Ensure only one history item opens at a time */
+.historysec .accordion-collapse.show ~ .accordion-item .accordion-collapse {
+    display: none !important;
+}
+@media screen and (max-width: 768px) {
+  .dropdown-his {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 0.75rem !important;
+  }
+
+  .historysec .accordion-button {
+    padding: 0.875rem !important;
+    font-size: 0.9rem !important;
+  }
+
+  .historysec1 {
+    margin-bottom: 0.5rem !important;
+  }
+
+  .historysec .accordion-body {
+    padding: 1rem !important;
+  }
+}
